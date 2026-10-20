@@ -1,6 +1,7 @@
 """Linux/XDG path and lifecycle policy."""
 
 import os
+import posixpath
 import shutil
 
 from .base import CpuActivity, PlatformPaths, TrashPlan, UpdatePlan
@@ -36,7 +37,7 @@ def parse_proc_stat(text):
 
 def _read_supply_value(root, name, field):
     try:
-        with open(os.path.join(root, name, field), encoding="utf-8") as handle:
+        with open(posixpath.join(root, name, field), encoding="utf-8") as handle:
             return handle.read(64).strip()
     except (OSError, UnicodeDecodeError):
         return ""
@@ -54,16 +55,16 @@ class LinuxPlatformServices(PosixPlatformServices):
             data_home=data_home,
             cache_home=cache_home,
             claude_desktop_data_roots=(
-                os.path.join(config_home, "Claude"),
-                os.path.join(config_home, "Claude-3p"),
+                posixpath.join(config_home, "Claude"),
+                posixpath.join(config_home, "Claude-3p"),
             ),
-            cursor_state_db=os.path.join(
+            cursor_state_db=posixpath.join(
                 config_home, "Cursor", "User", "globalStorage", "state.vscdb"
             ),
-            cursor_request_logs=os.path.join(config_home, "Cursor", "logs"),
-            opencode_data_root=os.path.join(data_home, "opencode"),
-            opencode_cache_root=os.path.join(cache_home, "opencode"),
-            default_trash_dir=os.path.join(data_home, "Trash", "files"),
+            cursor_request_logs=posixpath.join(config_home, "Cursor", "logs"),
+            opencode_data_root=posixpath.join(data_home, "opencode"),
+            opencode_cache_root=posixpath.join(cache_home, "opencode"),
+            default_trash_dir=posixpath.join(data_home, "Trash", "files"),
         )
 
     def trash_plan(self, path, override=None, command_available=False):
@@ -89,6 +90,10 @@ class LinuxPlatformServices(PosixPlatformServices):
     def update_plan(self, source_root, checkout, status_path, retry_revision="",
                     systemd_run=None):
         plan = super().update_plan(source_root, checkout, status_path, retry_revision)
+        # Only a server started by systemd shares a cgroup with its children;
+        # elsewhere a user manager may be absent and systemd-run would fail.
+        if not self.environment.get("INVOCATION_ID"):
+            return plan
         if systemd_run is None:
             systemd_run = shutil.which("systemd-run", path=self.environment.get("PATH"))
         if not systemd_run:

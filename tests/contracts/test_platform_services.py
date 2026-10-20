@@ -160,7 +160,9 @@ class PlatformServicesTests(unittest.TestCase):
         )
 
     def test_linux_update_plan_runs_the_helper_outside_the_server_cgroup(self):
-        platform = platform_services("linux", environment={}, home="/home/example")
+        platform = platform_services(
+            "linux", environment={"INVOCATION_ID": "a" * 32}, home="/home/example",
+        )
 
         update = platform.update_plan(
             "/opt/token-meter", "/home/example/source", "/home/example/status.json",
@@ -189,18 +191,25 @@ class PlatformServicesTests(unittest.TestCase):
         )
 
     def test_linux_update_plan_falls_back_to_the_helper_without_systemd_run(self):
-        platform = platform_services("linux", environment={}, home="/home/example")
-
-        update = platform.update_plan(
-            "/opt/token-meter", "/home/example/source", "/home/example/status.json",
-            systemd_run="",
+        under_systemd = platform_services(
+            "linux", environment={"INVOCATION_ID": "a" * 32}, home="/home/example",
         )
-
-        self.assertEqual(update.command, (
+        started_by_hand = platform_services("linux", environment={}, home="/home/example")
+        helper = (
             "/opt/token-meter/scripts/update",
             "/home/example/source",
             "/home/example/status.json",
-        ))
+        )
+
+        for platform, systemd_run in (
+            (under_systemd, ""),
+            (started_by_hand, "/usr/bin/systemd-run"),
+        ):
+            update = platform.update_plan(
+                "/opt/token-meter", "/home/example/source", "/home/example/status.json",
+                systemd_run=systemd_run,
+            )
+            self.assertEqual(update.command, helper)
 
     def test_linux_prefers_gio_and_macos_uses_owned_trash_directory(self):
         linux = platform_services("linux", environment={}, home="/home/example")

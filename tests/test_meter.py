@@ -16027,7 +16027,9 @@ class SoftwareUpdateTests(unittest.TestCase):
                 "can_update": False,
             }, str(status_path))
             popen = mock.Mock()
-            linux = meter.platform_services("linux", environment={}, home=tmp)
+            linux = meter.platform_services(
+                "linux", environment={"INVOCATION_ID": "a" * 32}, home=tmp,
+            )
             with (mock.patch.object(meter, "source_checkout_path", return_value=tmp),
                   mock.patch.object(meter, "_PLATFORM_SERVICES", linux),
                   mock.patch("token_meter.platforms.linux.shutil.which",
@@ -16085,6 +16087,50 @@ class SoftwareUpdateTests(unittest.TestCase):
         self.assertEqual(stored["previous_revision"], "a" * 40)
         self.assertEqual(status["state"], "attention")
         self.assertIn("stopped before it finished", status["message"])
+
+    def test_stale_check_falls_back_to_checked_at_and_needs_a_timestamp(self):
+        """The Windows helper writes in-progress records without started_at."""
+        with tempfile.TemporaryDirectory() as tmp:
+            status_path = str(Path(tmp) / "update-status.json")
+            windows_record = {
+                "phase": "installing", "checked_at": 1000, "latest_revision": "b" * 40,
+            }
+            meter._persist_update_status(windows_record, status_path)
+            fresh = meter._recover_stale_update(
+                windows_record, now=1005, status_path=status_path,
+            )
+            undated = meter._recover_stale_update(
+                {"phase": "fetching"}, now=10 ** 9, status_path=status_path,
+            )
+            still_installing = json.loads(Path(status_path).read_text())["phase"]
+            stale = meter._recover_stale_update(
+                windows_record, now=1000 + meter.UPDATE_STALE_AFTER_S,
+                status_path=status_path,
+            )
+            stored = json.loads(Path(status_path).read_text())
+        self.assertFalse(fresh)
+        self.assertFalse(undated)
+        self.assertEqual(still_installing, "installing")
+        self.assertTrue(stale)
+        self.assertEqual(stored["error_code"], "update_interrupted")
+
+    def test_update_watcher_waits_on_a_fresh_in_progress_update(self):
+        wake = mock.Mock()
+        wake.wait.side_effect = [None, RuntimeError("stop watcher")]
+        fresh = {"phase": "installing", "started_at": int(time.time())}
+        with (mock.patch.object(meter, "_update_wake", wake),
+              mock.patch.object(
+                  meter, "update_settings",
+                  return_value={"enabled": True, "auto_install": False},
+              ),
+              mock.patch.object(meter, "_update_status_record", return_value=fresh),
+              mock.patch.object(meter, "_persist_update_status") as persist,
+              mock.patch.object(meter, "check_for_software_update") as check):
+            with self.assertRaisesRegex(RuntimeError, "stop watcher"):
+                meter.software_update_watcher()
+        persist.assert_not_called()
+        self.assertEqual(wake.wait.call_args_list, [mock.call(5), mock.call(5)])
+        check.assert_not_called()
 
     def test_update_watcher_recovers_a_stale_in_progress_update(self):
         wake = mock.Mock()

@@ -37,8 +37,41 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Pull-request checkouts are detached; installer tests clone this
+      # repository and expect a local main branch, as a developer clone has.
+      - name: Name the checked-out commit main
+        run: git switch --quiet -C main
+
       - name: Run the test suite
+        if: runner.os != 'Windows'
         run: python -m unittest discover -s tests
+
+      # The full suite is not yet Windows-clean (SQLite handles held across
+      # temp-dir cleanup, mktime range limits). Run every module that is, so
+      # a regression in them still fails here.
+      - name: Run the Windows-clean test modules
+        if: runner.os == 'Windows'
+        run: >-
+          python -m unittest
+          tests.contracts.test_agent_workflow tests.contracts.test_architecture_guards
+          tests.contracts.test_compat tests.contracts.test_contracts tests.contracts.test_design_system
+          tests.contracts.test_kiro_extension_budget tests.contracts.test_model_pricing
+          tests.contracts.test_path_cache tests.contracts.test_platform_services
+          tests.contracts.test_public_projections tests.contracts.test_quota_privacy
+          tests.contracts.test_quota_registry tests.contracts.test_runtime_catalog
+          tests.contracts.test_runtime_manifest tests.contracts.test_runtime_registry
+          tests.contracts.test_telemetry_mapping tests.contracts.test_windows_packaging
+          tests.domain.test_aggregates tests.domain.test_compare tests.domain.test_matched_pace_parity
+          tests.domain.test_timing_tools_insights tests.domain.test_usage
+          tests.integration.test_application_composition tests.integration.test_discovery_performance
+          tests.integration.test_model_pricing_compat
+          tests.integration.test_runtime_dispatch_characterization
+          tests.integration.test_session_selection
+          tests.runtimes.test_claude_adapter tests.runtimes.test_codex_adapter
+          tests.runtimes.test_kiro_adapter tests.runtimes.test_pi_adapter
+          tests.test_claude_cost_correctness tests.test_codex_model_identity
+          tests.test_current_model_catalog tests.test_goals tests.test_installer_modes tests.test_linux_update
+          tests.test_mcp_queries tests.test_mcp_server tests.test_menubar_settings
 
   static:
     name: Static checks
@@ -79,6 +112,18 @@ jobs:
 
       - name: Compile the menu-bar companion
         run: swiftc menubar/TokenMeterMenuBar.swift -o "$RUNNER_TEMP/token-meter-menubar"
+
+      # The smoke check reads the live /menubar payload, as it does after install.
+      - name: Start the local server
+        run: |
+          python3 .github/scripts/write_sample_trace.py
+          nohup python3 meter.py > "$RUNNER_TEMP/meter.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            curl -fsS --max-time 3 http://127.0.0.1:8722/menubar >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/meter.log"
+          exit 1
 
       - name: Run the smoke check
         run: TOKEN_METER_MENUBAR_SMOKE=1 "$RUNNER_TEMP/token-meter-menubar"

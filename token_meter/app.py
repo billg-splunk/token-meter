@@ -2544,8 +2544,11 @@ def start_software_update(popen=None, settings_path=None, status_path=None):
 def _recover_stale_update(previous, now=None, status_path=None):
     """Fail an in-progress update whose helper stopped without a final status."""
     started_at = _safe_update_int(previous.get("started_at"))
+    # The Windows helper rewrites the record without started_at but stamps
+    # checked_at on every phase.
+    progressed_at = started_at or _safe_update_int(previous.get("checked_at"))
     now = int(now or time.time())
-    if started_at and now - started_at < UPDATE_STALE_AFTER_S:
+    if not progressed_at or now - progressed_at < UPDATE_STALE_AFTER_S:
         return False
     latest_revision = previous.get("latest_revision", "")
     return _persist_update_status({
